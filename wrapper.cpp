@@ -1,4 +1,5 @@
-﻿#include <pcl/PCLPointCloud2.h>
+﻿#include <time.h>
+#include <pcl/PCLPointCloud2.h>
 #include <pcl/io/pcd_io.h>
 #include <pcl/io/ply_io.h>
 #include <pcl/visualization/pcl_visualizer.h>
@@ -101,7 +102,10 @@ extern "C" {
 		pcl::NormalEstimationOMP<PointNT, PointNT> nest;
 		nest.setRadiusSearch(0.01);
 		nest.setInputCloud(scene);
-		nest.compute(*scene);
+		nest.compute(*scene); 
+		nest.setInputCloud(object);
+		nest.compute(*object);
+
 
 		// Estimate features
 		pcl::console::print_highlight("Estimating features...\n");
@@ -274,11 +278,15 @@ extern "C" {
 	{
 		//pcl::visualization::PCLVisualizer::Ptr viewer(new pcl::visualization::PCLVisualizer);
 		//pcl::visualization::PCLVisualizer *viewer = static_cast<pcl::visualization::PCLVisualizer *> (viewer_void);
+		
+//=============================================nitialize================================================
 		pcl::PCLPointCloud2 cloud;
 		cloud.data.clear();
 		cloud.data.resize(size * sizeof(float));
 
 		//uint8_t *start = reinterpret_cast<uint8_t*> (source);
+
+//===========================================read header file============================================
 
 		pcl::PCDReader reader;
 		if (reader.readHeader("bunny.pcd", cloud) == -1) {
@@ -292,7 +300,7 @@ extern "C" {
 		pcl::PointCloud<pcl::PointXYZ>::Ptr pc(new pcl::PointCloud<pcl::PointXYZ>);
 		pcl::fromPCLPointCloud2(cloud, *pc);
 
-		//tracking(pc);
+//===========================================segmentation=============================================
 
 		//fout << "after pc2" << pc->points.size() << endl;
 		// ransac plane detection
@@ -315,14 +323,14 @@ extern "C" {
 		seg.setInputCloud(pc);
 		//分割点云
 		seg.segment(*inliers, *coefficients);
-
+//==========================================extract plane()================================================
 		pcl::PointCloud<pcl::PointXYZ>::Ptr segmentCloud(new pcl::PointCloud<pcl::PointXYZ>);
 		pcl::ExtractIndices<pcl::PointXYZ> extract;
 		extract.setInputCloud(pc);
 		extract.setIndices(inliers);
 		extract.setNegative(true);
 		extract.filter(*segmentCloud);
-
+//======================================filter out large z (not used)========================================
 		pcl::PassThrough<pcl::PointXYZ> pass;
 		pass.setFilterFieldName("z");
 		pass.setFilterLimits(0.0, 0.4);
@@ -334,10 +342,6 @@ extern "C" {
 		//pcl::visualization::PCLVisualizer::Ptr viewer(new pcl::visualization::PCLVisualizer);
 		//viewer->updatePointCloud(segmentCloud,"cloud");
 		//viewer->addCoordinateSystem(0.2);
-
-
-
-
 		////======= Visualization of plane ======
 		//pcl::PointCloud<pcl::PointXYZRGB>::Ptr pc_color(new pcl::PointCloud<pcl::PointXYZRGB>);
 		//pcl::copyPointCloud(*pc, *pc_color);
@@ -350,6 +354,9 @@ extern "C" {
 			pc_color->points[i].rgb = *reinterpret_cast<float*>(&pc_green);
 		}
 		*/
+
+//=============================find center of the detected plane and transform================================
+
 		float sum_x=0, sum_y=0, sum_z=0;
 
 		for (size_t i = 0; i < inliers->indices.size(); i++)
@@ -368,6 +375,7 @@ extern "C" {
 		Eigen::Vector4d quat;
 		quat << temp, quat_w;
 		quat.normalize();
+		
 
 		transInfo[0] = avg_x;
 		transInfo[1] = avg_y;
@@ -406,9 +414,11 @@ extern "C" {
 
 	int dataConverter(float* source, int size, float* vir_pose, float* initial_guess, float* output_pose, bool isFirst)
 	{
+		
 		ofstream fout;
 		fout.open("test.txt");
 		fout << "size: " << size << endl;
+//=================================================the viewer==========================================================
 		pcl::visualization::PCLVisualizer::Ptr viewer(new pcl::visualization::PCLVisualizer);
 		pcl::PCLPointCloud2 cloud;
 		cloud.data.clear();
@@ -423,12 +433,9 @@ extern "C" {
 			return (-1);
 		}
 
-		//cout << "point step" << cloud.point_step << endl;
 		fout << "point step:\t" << cloud.point_step << endl;
 		//for test
 		for (auto f : cloud.fields) {
-			//cout << f;
-			//cout << "next field" << endl;
 			fout << f;
 			fout << "next field\n";
 		}
@@ -440,16 +447,15 @@ extern "C" {
 		pcl::fromPCLPointCloud2(cloud, *pc);
 		fout << "after pc2" << pc->points.size() << endl;
 
-
-		// ransac plane detection
-		//创建一个模型参数对象，用于记录结果
+//==================================================plane detection==========================================================
+		
+//创建一个模型参数对象，用于记录结果
 		pcl::ModelCoefficients::Ptr coefficients(new pcl::ModelCoefficients);
 		//inliers表示误差能容忍的点 记录的是点云的序号
 		pcl::PointIndices::Ptr inliers(new pcl::PointIndices);
 		// 创建一个分割器
 		pcl::SACSegmentation<pcl::PointXYZ> seg;
 		seg.setMaxIterations(100);
-
 		// Optional
 		seg.setOptimizeCoefficients(true);
 		// Mandatory-设置目标几何形状
@@ -457,11 +463,13 @@ extern "C" {
 		//分割方法：随机采样法
 		seg.setMethodType(pcl::SAC_RANSAC);
 		//设置误差容忍范围
-		seg.setDistanceThreshold(0.0250);
+		seg.setDistanceThreshold(0.015); //0.025
 		//输入点云
 		seg.setInputCloud(pc);
 		//分割点云
 		seg.segment(*inliers, *coefficients);
+
+//==================================================color plane==========================================================
 
 		pcl::PointCloud<pcl::PointXYZRGB>::Ptr pc_color(new pcl::PointCloud<pcl::PointXYZRGB>);
 		pcl::copyPointCloud(*pc, *pc_color);
@@ -471,88 +479,173 @@ extern "C" {
 		uint32_t pc_red = ((uint32_t)pc_r << 16 | (uint32_t)pc_g << 8 | (uint32_t)pc_b);
 		pc_r = 0, pc_g = 255, pc_b = 0;
 		uint32_t pc_green = ((uint32_t)pc_r << 16 | (uint32_t)pc_g << 8 | (uint32_t)pc_b);
+		pc_r = 0, pc_g = 50, pc_b = 255;
+		uint32_t pc_blue = ((uint32_t)pc_r << 16 | (uint32_t)pc_g << 8 | (uint32_t)pc_b);
+		pc_r = 255, pc_g = 255, pc_b = 80;
+		uint32_t pc_yellow = ((uint32_t)pc_r << 16 | (uint32_t)pc_g << 8 | (uint32_t)pc_b);
 		
 		for (size_t i = 0; i < pc_color->size(); i++)
 		{
-			pc_color->points[i].rgb = *reinterpret_cast<float*>(&pc_green);
+			pc_color->points[i].rgb = *reinterpret_cast<float*>(&pc_blue);
 		}
 
-		for (size_t i = 0; i < inliers->indices.size(); i++)
+		/*for (size_t i = 0; i < inliers->indices.size(); i++)
 		{
 			pc_color->points[inliers->indices[i]].rgb = *reinterpret_cast<float*>(&pc_red);
-		}
-		viewer->addPointCloud(pc_color, "pc_rgb");
-		//viewer->addCoordinateSystem(0.2);
+		}*/
+		//viewer->addPointCloud(pc_color, "pc_rgb");
 		
-		
+//==================================================find the segmentaion==========================================================
+
 		pcl::PointCloud<pcl::PointXYZ>::Ptr above_plane(new pcl::PointCloud<pcl::PointXYZ>);
+		pcl::PointIndices::Ptr above_plane_ind(new pcl::PointIndices);
+		above_plane_ind->indices.clear();
 		above_plane->clear();
+
+		float norm_fac = sqrt(coefficients->values[0] * coefficients->values[0] + coefficients->values[1] * coefficients->values[1] + coefficients->values[2] * coefficients->values[2]);
 		for (int i = 0; i < pc->points.size();i++)
 		{
 			auto point = pc->points[i];
 			float classifier = point.x*coefficients->values[0] + point.y*coefficients->values[1] + point.z*coefficients->values[2] + coefficients->values[3];
+			
 			if (coefficients->values[2]>0)
 			{
 				classifier = -classifier;
 			}
-			if (classifier > 0.005 && point.z < 1.0f)
+			//larger z than 0.8 meter not allowed
+			if (classifier/norm_fac > 0.018 && point.z < 0.6f  && abs(point.x) < 0.25f && abs(point.y) < 0.20f)
 			{
+				above_plane_ind->indices.push_back(i);
 				above_plane->push_back(point);
 			}
 		}
+		// -------add color to above plane in pc---------
+		for (size_t i = 0; i < above_plane_ind->indices.size(); i++)
+		{
+			pc_color->points[above_plane_ind->indices[i]].rgb = *reinterpret_cast<float*>(&pc_yellow);
+		}
+		viewer->addPointCloud(pc_color, "pc_rgb");
+//==============================================import cad model ==================================================================
+
 		pcl::PointCloud<pcl::PointXYZ>::Ptr cad_bunny(new pcl::PointCloud<pcl::PointXYZ>);
-		pcl::io::loadPCDFile("bunny.pcd", *cad_bunny);
+		pcl::io::loadPLYFile("bun_zipper_res2_m.ply", *cad_bunny);
+		//pcl::io::loadPLYFile("bone-chisel-ciseau-a-os-m.ply", *cad_bunny);
+		//pcl::io::loadPLYFile("chisel_bend.ply", *cad_bunny);
+		Eigen::Matrix4f transform_1 = Eigen::Matrix4f::Identity();
+		transform_1(1, 1) = -1;
+		Eigen::Affine3f transform_2 = Eigen::Affine3f::Identity();
+		// Define a translation of 2.5 meters on the x axis.
+		transform_2.translation() << 0.0, 0.0, 0.0;
+		// The same rotation matrix as before; theta radians around Z axis
+		float theta = M_PI;
+		transform_2.rotate(Eigen::AngleAxisf(theta, Eigen::Vector3f::UnitX()));
+		pcl::transformPointCloud(*cad_bunny, *cad_bunny, transform_1);
+		//pcl::transformPointCloud(*cad_bunny, *cad_bunny, transform_2);
 		
-		viewer->addPointCloud(cad_bunny, "bunny");
-		pcl::visualization::PointCloudColorHandlerCustom<pcl::PointXYZ> rgb(above_plane, 255, 255, 80);
-		viewer->addPointCloud(above_plane, rgb, "above_plane");
-		viewer->addCoordinateSystem(0.2);
-		return 0;
-
+		
 		Eigen::Matrix4f pose = Eigen::Matrix4f::Identity();
-		if (!isFirst)
-		{
-			/*pose.block<3, 1>(0, 3) = Eigen::Vector3f(initial_guess[0], initial_guess[1], initial_guess[2]);
-			Eigen::Quaternionf q(initial_guess[3], initial_guess[4], initial_guess[5], initial_guess[6]);
-			pose.block<3, 3>(0, 0) = q.normalized().toRotationMatrix();*/
-			memcpy(pose.data(), initial_guess,16*sizeof(float));
-			
-		}
-		else
-		{
-			PointCloudT::Ptr scene(new PointCloudT);
-			PointCloudT::Ptr object(new PointCloudT);
+		
+		//if (!isFirst)
+		//{
+		//	/*pose.block<3, 1>(0, 3) = Eigen::Vector3f(initial_guess[0], initial_guess[1], initial_guess[2]);
+		//	Eigen::Quaternionf q(initial_guess[3], initial_guess[4], initial_guess[5], initial_guess[6]);
+		//	pose.block<3, 3>(0, 0) = q.normalized().toRotationMatrix();*/
+		//	memcpy(pose.data(), initial_guess, 16*sizeof(float));
+		//	
+		//}
+		//else
+		//{
+		PointCloudT::Ptr scene(new PointCloudT);
+		PointCloudT::Ptr object(new PointCloudT);
 
-			pcl::copyPointCloud(*pc, *scene);
-			pcl::copyPointCloud(*cad_bunny, *object);
-			Eigen::Matrix4f transformation;
-			
-			if (initialGuess(object, scene, transformation) == 0)
-			{
-				pose = transformation;
-			}
+		pcl::copyPointCloud(*above_plane, *scene);
+		pcl::copyPointCloud(*cad_bunny, *object);
+		Eigen::Matrix4f transformation;
+		
+		if (initialGuess(object, scene, transformation) == 0)
+		{
+			pose = transformation;
 		}
+		//}
+
+		Eigen::Vector3d u(0, -1, 0);
+		Eigen::Vector3d v(-coefficients->values[0], -coefficients->values[1], -coefficients->values[2]);
+		Eigen::Vector3d temp = u.cross(v);
+		double quat_w = u.norm()*v.norm() + u.dot(v);
+		Eigen::Quaternionf quat(quat_w, temp[0], temp[1], temp[2]);
+		quat.normalize();
+
+		pose.block<3, 3>(0, 0) = quat.toRotationMatrix();
 
 		pcl::transformPointCloud(*cad_bunny, *cad_bunny, pose);
-
+//=========================================== icp ===========================================================================
 		pcl::IterativeClosestPoint<pcl::PointXYZ, pcl::PointXYZ> icp;
+		pcl::VoxelGrid<pcl::PointXYZ> grid;
+		const float leaf = 0.005f;
+		grid.setLeafSize(leaf, leaf, leaf);
+		grid.setInputCloud(cad_bunny);
+		grid.filter(*cad_bunny);
+		grid.setInputCloud(above_plane);
+		grid.filter(*above_plane);
 		icp.setInputCloud(cad_bunny);
 		icp.setInputTarget(above_plane);
+		
 		// Set the max correspondence distance to 5cm (e.g., correspondences with higher distances will be ignored)
-		icp.setMaxCorrespondenceDistance(0.1);
+		icp.setMaxCorrespondenceDistance(0.2); // suppose to be 0.1
 		// Set the maximum number of iterations (criterion 1)
-		icp.setMaximumIterations(50);
+		icp.setMaximumIterations(10);
 		// Set the transformation epsilon (criterion 2)
 		icp.setTransformationEpsilon(1e-10);
 		// Set the euclidean distance difference epsilon (criterion 3)
-		icp.setEuclideanFitnessEpsilon(1);
-		
-		pcl::PointCloud<pcl::PointXYZ> Final;
-		icp.align(Final);
+		icp.setEuclideanFitnessEpsilon(1e-5);
+		//icp.setRANSACOutlierRejectionThreshold(0.001);
 
-		Eigen::Matrix4f d_pose = icp.getFinalTransformation();
+		pcl::PointCloud<pcl::PointXYZ> Final;
+
+		for (size_t i = 0; i < 5; i++)
+		{
+			Eigen::Matrix4f tempPose = pose;
+			icp.align(Final);
+			Eigen::Matrix4f d_pose = icp.getFinalTransformation();
+			pcl::transformPointCloud(*cad_bunny, *cad_bunny, d_pose);
+			//pose = d_pose * pose;
+			/*
+			Eigen::Vector3f u = -pose.block<3,1>(0,1);
+			Eigen::Vector3f v(-coefficients->values[0], -coefficients->values[1], -coefficients->values[2]);
+			Eigen::Vector3f temp = u.cross(v);
+			double quat_w = u.norm()*v.norm() + u.dot(v);
+			Eigen::Quaternionf quat(quat_w, temp[0], temp[1], temp[2]);
+			quat.normalize();
+			Eigen::Matrix4f d_pose_2 = Eigen::Matrix4f::Identity();
+			d_pose_2.block<3, 3>(0, 0) = quat.toRotationMatrix();
+
+			pcl::transformPointCloud(*cad_bunny, *cad_bunny, d_pose * d_pose_2 * tempPose.inverse());// d_pose_2 * d_pose);
+			
+			pose = d_pose * pose;
+			*/
+		}
+		//icp.align(Final);
+
+		/*Eigen::Matrix4f d_pose = icp.getFinalTransformation();
 		pcl::transformPointCloud(*cad_bunny, *cad_bunny, d_pose);
-		pose = d_pose * pose;
+		pose = d_pose * pose;*/
+
+		//=============================================paint cad model ====================================================================
+		pcl::visualization::PointCloudColorHandlerCustom<pcl::PointXYZ> bunny_red(cad_bunny, 255, 0, 0);
+		viewer->addPointCloud(cad_bunny, bunny_red, "bunny");
+		viewer->addCoordinateSystem(0.2);
+
+		/*time_t id = time(0);
+		string filename = "bunny_" + id;
+		pcl::io::savePLYFile(filename+".ply", *pc_color);*/
+		pcl::io::savePLYFile("bunny_cloud.ply", *pc_color);
+		return 0;
+
+		//============================================not running after this=======================================================
+
+		//!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+
+		
 
 		/*viewer->addPointCloud(cad_bunny,"bunny");
 		pcl::visualization::PointCloudColorHandlerCustom<pcl::PointXYZ> rgb(above_plane, 0, 0, 255);
@@ -564,7 +657,8 @@ extern "C" {
 		//pcl::io::savePCDFileASCII("pc.pcd", *pc);
 		pcl::io::savePLYFile("seg_cloud.ply", *colored_cloud);
 		*/
-		pcl::io::savePCDFileASCII("pc.pcd", *pc);
+		
+		pcl::io::savePLYFileASCII("pc.ply", *pc);
 		fout.close();
 		return 0;
 		
