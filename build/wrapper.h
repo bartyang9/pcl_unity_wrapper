@@ -26,6 +26,6 @@ extern "C" {
 	typedef pcl::PointCloud<FeatureT> FeatureCloudT;
 	typedef pcl::visualization::PointCloudColorHandlerCustom<PointNT> ColorHandlerT;
 	__declspec(dllexport) int detectplane(float* source, int size, float* transInfo);
-	__declspec(dllexport) int dataConverter(float* source, int size, float* vir_pose, float* initial_guess, float* output_pose, bool isFirst);
+	__declspec(dllexport) float* dataConverter(float* source, int size, float* initial_guess, bool isFirst);
 	__declspec(dllexport) int initialGuess(PointCloudT::Ptr object, PointCloudT::Ptr scene, Eigen::Matrix4f &transformation);
 }

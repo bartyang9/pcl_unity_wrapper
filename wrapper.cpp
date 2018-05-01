@@ -1,4 +1,5 @@
 ﻿#include <time.h>
+#include <string>
 #include <pcl/PCLPointCloud2.h>
 #include <pcl/io/pcd_io.h>
 #include <pcl/io/ply_io.h>
@@ -412,25 +413,25 @@ extern "C" {
 	}
 
 
-	int dataConverter(float* source, int size, float* vir_pose, float* initial_guess, float* output_pose, bool isFirst)
+	float* dataConverter(float* source, int size, float* initial_guess/*, float* output_pose*/, bool isFirst)
 	{
 		
 		ofstream fout;
 		fout.open("test.txt");
 		fout << "size: " << size << endl;
 //=================================================the viewer==========================================================
-		pcl::visualization::PCLVisualizer::Ptr viewer(new pcl::visualization::PCLVisualizer);
+		//pcl::visualization::PCLVisualizer::Ptr viewer(new pcl::visualization::PCLVisualizer);
 		pcl::PCLPointCloud2 cloud;
 		cloud.data.clear();
 		cloud.data.resize(size * sizeof(float));
 		
 		//uint8_t *start = reinterpret_cast<uint8_t*> (source);
-
+		
 		pcl::PCDReader reader;
 		if (reader.readHeader("bunny.pcd", cloud) == -1) {
 			//cout << "read header error" << endl;
 			fout << "read header error\n";
-			return (-1);
+			return nullptr;
 		}
 
 		fout << "point step:\t" << cloud.point_step << endl;
@@ -449,7 +450,7 @@ extern "C" {
 
 //==================================================plane detection==========================================================
 		
-//创建一个模型参数对象，用于记录结果
+		//创建一个模型参数对象，用于记录结果
 		pcl::ModelCoefficients::Ptr coefficients(new pcl::ModelCoefficients);
 		//inliers表示误差能容忍的点 记录的是点云的序号
 		pcl::PointIndices::Ptr inliers(new pcl::PointIndices);
@@ -513,18 +514,29 @@ extern "C" {
 				classifier = -classifier;
 			}
 			//larger z than 0.8 meter not allowed
-			if (classifier/norm_fac > 0.018 && point.z < 0.6f  && abs(point.x) < 0.25f && abs(point.y) < 0.20f)
+			if (classifier/norm_fac > 0.018 && point.z < 0.8f  && abs(point.x) < 0.25f && abs(point.y) < 0.20f)
 			{
 				above_plane_ind->indices.push_back(i);
 				above_plane->push_back(point);
 			}
+		}
+		if (above_plane->size()<5)
+		{
+			float* output_pose = new float[16];
+			for (size_t i = 0; i < 15; i++)
+			{
+				output_pose[i] = -1;
+			}
+
+			
+			return output_pose;
 		}
 		// -------add color to above plane in pc---------
 		for (size_t i = 0; i < above_plane_ind->indices.size(); i++)
 		{
 			pc_color->points[above_plane_ind->indices[i]].rgb = *reinterpret_cast<float*>(&pc_yellow);
 		}
-		viewer->addPointCloud(pc_color, "pc_rgb");
+		//viewer->addPointCloud(pc_color, "pc_rgb");
 //==============================================import cad model ==================================================================
 
 		pcl::PointCloud<pcl::PointXYZ>::Ptr cad_bunny(new pcl::PointCloud<pcl::PointXYZ>);
@@ -541,8 +553,19 @@ extern "C" {
 		transform_2.rotate(Eigen::AngleAxisf(theta, Eigen::Vector3f::UnitX()));
 		pcl::transformPointCloud(*cad_bunny, *cad_bunny, transform_1);
 		//pcl::transformPointCloud(*cad_bunny, *cad_bunny, transform_2);
+		pcl::PointCloud<pcl::PointXYZ>::Ptr cad_bunny_update(new pcl::PointCloud<pcl::PointXYZ>);
 		
-		
+		// ---------------- downsampling -------------------------------
+		pcl::VoxelGrid<pcl::PointXYZ> grid;
+		const float leaf = 0.002f;
+		grid.setLeafSize(leaf, leaf, leaf);
+		grid.setInputCloud(cad_bunny);
+		grid.filter(*cad_bunny);
+		//grid.setInputCloud(above_plane);
+		//grid.filter(*above_plane);
+
+		pcl::copyPointCloud(*cad_bunny, *cad_bunny_update);
+
 		Eigen::Matrix4f pose = Eigen::Matrix4f::Identity();
 		
 		//if (!isFirst)
@@ -577,19 +600,13 @@ extern "C" {
 
 		pose.block<3, 3>(0, 0) = quat.toRotationMatrix();
 
-		pcl::transformPointCloud(*cad_bunny, *cad_bunny, pose);
+		pcl::transformPointCloud(*cad_bunny_update, *cad_bunny_update, pose);
 //=========================================== icp ===========================================================================
 		pcl::IterativeClosestPoint<pcl::PointXYZ, pcl::PointXYZ> icp;
-		pcl::VoxelGrid<pcl::PointXYZ> grid;
-		const float leaf = 0.005f;
-		grid.setLeafSize(leaf, leaf, leaf);
-		grid.setInputCloud(cad_bunny);
-		grid.filter(*cad_bunny);
-		grid.setInputCloud(above_plane);
-		grid.filter(*above_plane);
-		icp.setInputCloud(cad_bunny);
-		icp.setInputTarget(above_plane);
 		
+		icp.setInputCloud(cad_bunny_update);
+		icp.setInputTarget(above_plane);
+
 		// Set the max correspondence distance to 5cm (e.g., correspondences with higher distances will be ignored)
 		icp.setMaxCorrespondenceDistance(0.2); // suppose to be 0.1
 		// Set the maximum number of iterations (criterion 1)
@@ -604,12 +621,15 @@ extern "C" {
 
 		for (size_t i = 0; i < 5; i++)
 		{
-			Eigen::Matrix4f tempPose = pose;
+			//Eigen::Matrix4f tempPose = pose;
 			icp.align(Final);
+			
+			//viewer->addText(std::to_string(score) , 20, 20, "score");
+
 			Eigen::Matrix4f d_pose = icp.getFinalTransformation();
-			pcl::transformPointCloud(*cad_bunny, *cad_bunny, d_pose);
-			//pose = d_pose * pose;
-			/*
+			//pcl::transformPointCloud(*cad_bunny, *cad_bunny, d_pose);
+			pose = d_pose * pose;
+			
 			Eigen::Vector3f u = -pose.block<3,1>(0,1);
 			Eigen::Vector3f v(-coefficients->values[0], -coefficients->values[1], -coefficients->values[2]);
 			Eigen::Vector3f temp = u.cross(v);
@@ -618,12 +638,24 @@ extern "C" {
 			quat.normalize();
 			Eigen::Matrix4f d_pose_2 = Eigen::Matrix4f::Identity();
 			d_pose_2.block<3, 3>(0, 0) = quat.toRotationMatrix();
+			Eigen::Matrix4f d_pose_2_trans = Eigen::Matrix4f::Identity();
+			d_pose_2_trans(1, 3) = -0.025;
+			d_pose_2 = d_pose_2_trans * d_pose_2 * d_pose_2_trans.inverse();
 
-			pcl::transformPointCloud(*cad_bunny, *cad_bunny, d_pose * d_pose_2 * tempPose.inverse());// d_pose_2 * d_pose);
-			
-			pose = d_pose * pose;
-			*/
+			//pcl::transformPointCloud(*cad_bunny, *cad_bunny, d_pose.inverse());// d_pose_2 * d_pose);
+			//pcl::transformPointCloud(*cad_bunny, *cad_bunny, d_pose_2);// d_pose_2 * d_pose);
+			//pcl::transformPointCloud(*cad_bunny, *cad_bunny, d_pose);// d_pose_2 * d_pose);
+			pose = pose * d_pose_2;
+			pcl::transformPointCloud(*cad_bunny, *cad_bunny_update, pose);
 		}
+		icp.setMaximumIterations(100);
+		icp.align(Final);
+		float score = icp.getFitnessScore();
+		Eigen::Matrix4f d_pose = icp.getFinalTransformation();
+		//pcl::transformPointCloud(*cad_bunny, *cad_bunny, d_pose);
+		pose = d_pose * pose;
+
+		pcl::transformPointCloud(*cad_bunny, *cad_bunny_update, pose);
 		//icp.align(Final);
 
 		/*Eigen::Matrix4f d_pose = icp.getFinalTransformation();
@@ -631,15 +663,43 @@ extern "C" {
 		pose = d_pose * pose;*/
 
 		//=============================================paint cad model ====================================================================
-		pcl::visualization::PointCloudColorHandlerCustom<pcl::PointXYZ> bunny_red(cad_bunny, 255, 0, 0);
-		viewer->addPointCloud(cad_bunny, bunny_red, "bunny");
-		viewer->addCoordinateSystem(0.2);
+		pcl::visualization::PointCloudColorHandlerCustom<pcl::PointXYZ> bunny_red(cad_bunny_update, 255, 0, 0);
+		
+		//viewer->addPointCloud(cad_bunny_update, bunny_red, "bunny");
+		//viewer->addCoordinateSystem(0.2);
+		
+
+		
 
 		/*time_t id = time(0);
 		string filename = "bunny_" + id;
 		pcl::io::savePLYFile(filename+".ply", *pc_color);*/
 		pcl::io::savePLYFile("bunny_cloud.ply", *pc_color);
-		return 0;
+		float* output_pose = new float[16];
+		for (size_t i = 0; i < 15; i++)
+		{
+			output_pose[i] = i;
+		}
+		Eigen::Quaternionf output_quat(pose.block<3, 3>(0, 0));
+		
+		output_pose[8] = output_quat.w();
+		output_pose[9] = output_quat.x();
+		output_pose[10] = output_quat.y();
+		output_pose[11] = output_quat.z();
+		output_pose[12] = pose(0, 3);
+		output_pose[13] = pose(1, 3);
+		output_pose[14] = pose(2, 3);
+		output_pose[15] = score;
+		string pose_str = "pose: ";
+		for (size_t i = 8; i < 15; i++)
+		{
+			pose_str = pose_str + std::to_string(output_pose[i]) + " | ";
+		}
+		
+		//viewer->addText(pose_str,0,40,"pose");
+
+		return output_pose;
+		//return 0;
 
 		//============================================not running after this=======================================================
 
@@ -650,8 +710,6 @@ extern "C" {
 		/*viewer->addPointCloud(cad_bunny,"bunny");
 		pcl::visualization::PointCloudColorHandlerCustom<pcl::PointXYZ> rgb(above_plane, 0, 0, 255);
 		viewer->addPointCloud(above_plane, rgb,"above_plane");*/
-
-		memcpy(output_pose, pose.data(), 16*sizeof(float) );
         /*
 		pcl::PLYWriter writer;
 		//pcl::io::savePCDFileASCII("pc.pcd", *pc);
